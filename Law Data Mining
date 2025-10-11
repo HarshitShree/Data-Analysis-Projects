@@ -1,0 +1,382 @@
+
+Conversation with Gemini
+
+import os
+
+import time
+
+import re
+
+from selenium import webdriver
+
+from selenium.webdriver.common.by import By
+
+from selenium.webdriver.chrome.service import Service
+
+from selenium.webdriver.support.ui import WebDriverWait
+
+from selenium.webdriver.support import expected_conditions as EC
+
+from webdriver_manager.chrome import ChromeDriverManager
+
+
+
+
+
+SEARCH_QUERY = "fatal motor accident claims tribunal"
+
+TARGET_YEAR = "2025" 
+
+TARGET_COURT = "Delhi District Court"
+
+BASE_URL = "https://indiankanoon.org/"
+
+
+
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "indian_kanoon_downloads")
+
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+print(f"Downloads will be saved to: {DOWNLOAD_DIR}")
+
+
+
+def configure_chrome_options():
+
+    """Configures Chrome options for automated PDF downloading."""
+
+    options = webdriver.ChromeOptions()
+
+    prefs = {
+
+        "download.default_directory": DOWNLOAD_DIR,
+
+        "download.prompt_for_download": False,
+
+        "download.directory_upgrade": True,
+
+        "plugins.always_open_pdf_externally": True
+
+    }
+
+    options.add_experimental_option("prefs", prefs)
+
+    # options.add_argument("--headless")  # Uncomment to run without a visible browser GUI
+
+    options.add_argument("--disable-gpu")
+
+    options.add_argument("--window-size=1920,1080")
+
+    options.add_argument("--no-sandbox")
+
+    return options
+
+
+
+def initialize_driver(options):
+
+    """Initializes the Chrome WebDriver."""
+
+    service = Service(ChromeDriverManager().install())
+
+    driver = webdriver.Chrome(service=service, options=options)
+
+    driver.implicitly_wait(10) 
+
+    return driver
+
+
+
+def apply_filters_and_get_results(driver):
+
+    """Navigates to the search page, applies filters, and extracts document links 
+
+       from ALL paginated results."""
+
+    wait = WebDriverWait(driver, 20)
+
+    all_doc_links = set()
+
+    page_counter = 1
+
+
+
+
+
+    print(f"\n1. Searching for: '{SEARCH_QUERY}'")
+
+    search_url = f"{BASE_URL}search/?formInput={SEARCH_QUERY.replace(' ', '+')}"
+
+    driver.get(search_url)
+
+
+
+
+
+    print(f"2. Applying Court filter: {TARGET_COURT}")
+
+    try:
+
+        court_filter_xpath = f"//a[contains(text(), '{TARGET_COURT}')]"
+
+        court_filter = wait.until(EC.element_to_be_clickable((By.XPATH, court_filter_xpath)))
+
+        court_filter.click()
+
+        print("    Court filter applied successfully.")
+
+    except Exception as e:
+
+        print(f"    Error finding/clicking court filter: {e}")
+
+        return []
+
+
+
+
+
+    print(f"3. Applying Year filter: {TARGET_YEAR}")
+
+    try:
+
+        year_filter_xpath = f"//a[contains(text(), '{TARGET_YEAR}') and not(contains(text(), '20240'))]"
+
+        year_filter = wait.until(EC.element_to_be_clickable((By.XPATH, year_filter_xpath)))
+
+        year_filter.click()
+
+        print("    Year filter applied successfully.")
+
+        time.sleep(3)
+
+    except Exception as e:
+
+        print(f"    Error finding/clicking year filter: {e}")
+
+        pass
+
+
+
+    while True:
+
+        print(f"\nProcessing results page {page_counter}...")
+
+
+
+        # Wait for search results (links) to be visible
+
+        try:
+
+            wait.until(EC.presence_of_element_located((By.XPATH, "//a[starts-with(@href, '/docfragment/') or starts-with(@href, '/doc/')]")))
+
+        except:
+
+            print("No more results or page failed to load.")
+
+            break
+
+
+
+
+
+        doc_elements = driver.find_elements(By.XPATH, 
+
+            "//a[starts-with(@href, '/docfragment/') or starts-with(@href, '/doc/') and not(contains(@class, 'cite'))]")
+
+
+
+        current_page_links = [element.get_attribute('href') for element in doc_elements]
+
+
+
+
+
+        new_links_count = len(current_page_links)
+
+        print(f"    Found {new_links_count} judgment links on this page.")
+
+        for link in current_page_links:
+
+            if link:
+
+                all_doc_links.add(link)
+
+
+
+        try:
+
+            next_button_xpath = "//a[normalize-space()='Next']"
+
+            next_button = driver.find_element(By.XPATH, next_button_xpath)
+
+            
+
+            # Click the next button and pause for navigation
+
+            next_button.click()
+
+            page_counter += 1
+
+            time.sleep(3) 
+
+        except:
+
+            print("No 'Next' button found. End of search results.")
+
+            break
+
+
+
+    return list(all_doc_links)
+
+
+
+
+
+
+
+def download_pdfs(driver, doc_links):
+
+    """Visits the link, cleans the URL, clicks 'View complete document', and then clicks the PDF download button."""
+
+    wait = WebDriverWait(driver, 15)
+
+
+
+    print(f"\n--- Starting PDF Download for {len(doc_links)} Judgments ---")
+
+
+
+    for i, doc_url in enumerate(doc_links):
+
+
+
+        match = re.search(r'/docfragment/(\d+)/', doc_url)
+
+        
+
+        if match:
+
+            doc_id = match.group(1)
+
+
+
+            full_url = f"{BASE_URL}doc/{doc_id}/"
+
+        else:
+
+
+
+            if not doc_url.startswith(BASE_URL):
+
+                 full_url = BASE_URL.rstrip('/') + doc_url
+
+            else:
+
+                 full_url = doc_url
+
+
+
+        print(f"[{i+1}/{len(doc_links)}] Visiting {full_url}")
+
+        
+
+        try:
+
+            driver.get(full_url)
+
+
+
+
+
+            #try:
+
+                #view_button_xpath = "//a[contains(text(), 'View complete document')]"
+
+                #view_button = wait.until(EC.element_to_be_clickable((By.XPATH, view_button_xpath)))
+
+                #view_button.click()
+
+                #print("    Clicked 'View complete document'.")
+
+                #time.sleep(3) 
+
+            #except:
+
+                #print("    'View complete document' not found/needed. Proceeding.")
+
+                #pass
+
+
+
+
+
+            download_button = wait.until(EC.element_to_be_clickable((By.ID, "pdfdoc")))
+
+
+
+
+
+            download_button.click()
+
+            print("    Download initiated. Pausing for download...")
+
+            time.sleep(5) 
+
+
+
+        except Exception as e:
+
+            print(f"    Failed to process or download PDF for {full_url}. Error: {e}")
+
+
+
+    print("\n--- Download process complete. ---")
+
+
+
+def main():
+
+    options = configure_chrome_options()
+
+    driver = initialize_driver(options)
+
+
+
+    try:
+
+
+
+        doc_links = apply_filters_and_get_results(driver)
+
+
+
+        if doc_links:
+
+            print(f"\nSuccessfully collected {len(doc_links)} unique judgment links.")
+
+
+
+            download_pdfs(driver, doc_links)
+
+        else:
+
+            print("\nNo judgment links were collected after filtering.")
+
+
+
+    except Exception as e:
+
+        print(f"\nAn unexpected error occurred in main execution: {e}")
+
+    finally:
+
+        print("Quitting WebDriver.")
+
+        driver.quit()
+
+
+
+if __name__ == "__main__":
+
+    main()
